@@ -2,7 +2,7 @@ fx_version "cerulean"
 game "gta5"
 author "Pickle Mods"
 description "The Best Bail & Bounty System for FiveM"
-version "v1.0.2"
+version "v1.0.3"
 
 ui_page "nui/index.html"
 
