@@ -181,10 +181,11 @@ function GetClosestVehicle()
 end
 
 function VehicleInteract()
-    local vehicle = GetClosestVehicle()
+    local vehicle,distance = GetClosestVehicle()
+    if not vehicle or distance>5 or GetVehicleModelNumberOfSeats(GetEntityModel(vehicle))<4 then return false end
     local netId = VehToNet(vehicle)
     if not netId then return false end
-    if not IsVehicleSeatFree(vehicle, 2) and not GetPedInVehicleSeat(vehicle, 2) then ShowNotification("no_back_seat") return false end
+    if not IsVehicleSeatFree(vehicle, 2) then ShowNotification("no_back_seat") return false end
     TriggerServerEvent("pickle_bailbounty:vehicleInteract", netId)
     return true
 end
@@ -193,7 +194,9 @@ function BountyInteract(identifier, interactType)
     local entity = PlayerPedId()
     local data = nil
     if interactType == "detain" then
-        local ped = NetToPed(BountyInfo[identifier].netId)
+        local info=BountyInfo[identifier]
+        if not info then return end
+        local ped=info.source and GetPlayerPed(GetPlayerFromServerId(info.source)) or (info.netId and NetToPed(info.netId))
         data = {
             coords = GetOffsetFromEntityInWorldCoords(entity, 0.0, 0.8, -1.5),
             heading = GetEntityHeading(entity),
@@ -380,7 +383,7 @@ RegisterNetEvent("pickle_bailbounty:setBountyState", function(identifier, data)
             if BountyInfo[identifier].dragger and BountyInfo[identifier].dragger == GetPlayerServerId(PlayerId()) then
                 ClearPedTasks(PlayerPedId())
             end
-            if BountyInfo[identifier].dragger and BountyInfo[identifier].source == GetPlayerServerId(PlayerId()) then
+            if BountyInfo[identifier].source == GetPlayerServerId(PlayerId()) then
                 DetachEntity(PlayerPedId(), true, true)
                 ClearPedTasks(PlayerPedId())
             end
@@ -710,7 +713,7 @@ RegisterNetEvent("pickle_bailbounty:acceptBounty", function(target)
         reward = bounty.reward,
         description = bounty.description,
         date = bounty.datetime or 0,
-        risk = bounty.risk or (bounty.npc.risk or 3),
+        risk = bounty.risk or (bounty.npc and bounty.npc.risk or 3),
     }
     SendNUIMessage({
         type = "updateBounty",
@@ -722,7 +725,7 @@ RegisterNetEvent("pickle_bailbounty:acceptBounty", function(target)
     })
     if CurrentBounty.npc then
         local locations = Config.NPCBounties.locations
-        local location = locations[#locations > 1 and math.random(1, #locations) or 1]
+        local location = CurrentBounty.npc.location
         local blipCfg = Config.NPCBounties.blip
         local rngOffset = {1, 100}
         local rngScale = (math.random(rngOffset[1], rngOffset[2]) / rngOffset[2]) * (blipCfg.radius.size / 2)
@@ -752,7 +755,9 @@ RegisterNetEvent("pickle_bailbounty:acceptBounty", function(target)
                 local playerCoords = GetEntityCoords(playerPed)
                 local distance = #(playerCoords - location.coords)
                 if distance < 100.0 then
-                    CurrentBounty.targetNPC = CreateNPC(GetHashKey(CurrentBounty.npc.model), location.coords.x, location.coords.y, location.coords.z, location.heading, true, true)
+                    local missionNet=CurrentBounty.npc.netId
+                    if not missionNet or not NetworkDoesNetworkIdExist(missionNet) then Wait(100); goto continueSpawn end
+                    CurrentBounty.targetNPC=NetToPed(missionNet)
                     local netId = PedToNet(CurrentBounty.targetNPC)
                     if NetworkDoesNetworkIdExist(netId) then
                         SetTimeout(1000, function()
@@ -769,6 +774,7 @@ RegisterNetEvent("pickle_bailbounty:acceptBounty", function(target)
                     end
                     break
                 end
+                ::continueSpawn::
                 Wait(1000)
             end
             if not CurrentBounty or CurrentBounty.id ~= id or not CurrentBounty.targetNPC then

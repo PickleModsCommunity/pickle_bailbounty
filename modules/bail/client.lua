@@ -75,8 +75,8 @@ end
 local paroleMenuOpen = false
 local ParoleMissionState = nil
 
-function GenerateRandomParoleMission()
-    local mission = Config.Bail.paroleMissions[(#Config.Bail.paroleMissions > 1 and math.random(1, #Config.Bail.paroleMissions) or 1)]
+function GenerateRandomParoleMission(index)
+    local mission = Config.Bail.paroleMissions[index]
     return {
         label = mission.label,
         blip = mission.blip,
@@ -90,7 +90,11 @@ function GenerateRandomParoleMission()
 end
 
 function StartParoleMission()
-    ParoleMissionState = GenerateRandomParoleMission()
+    local issued=promise.new()
+    ServerCallback('pickle_bailbounty:beginParole',function(index) issued:resolve(index) end)
+    local index=Citizen.Await(issued)
+    if not index then return end
+    ParoleMissionState = GenerateRandomParoleMission(index)
     for i=1, #ParoleMissionState.points do 
         ParoleMissionState.interactions[#ParoleMissionState.interactions + 1] = CreateInteraction({
             coords = ParoleMissionState.points[i].coords,
@@ -99,7 +103,10 @@ function StartParoleMission()
             label = ParoleMissionState.points[i].label or (ParoleMissionState.pointLabel or "Parole Mission Point"),
             model = ParoleMissionState.points[i].model,
         }, function()
-            if ParoleMissionState.pointAction(ParoleMissionState.points[i]) then
+            local state=ParoleMissionState
+            if not state then return end
+            if state.pointAction(state.points[i]) and ParoleMissionState==state then
+                TriggerServerEvent('pickle_bailbounty:parolePoint',i)
                 ParoleMissionState.progress = ParoleMissionState.progress + 1
                 DeleteInteraction(ParoleMissionState.interactions[i])
                 ParoleMissionState.interactions[i] = nil
@@ -110,6 +117,7 @@ function StartParoleMission()
                     if ParoleMissionState.radiusBlip then
                         RemoveBlip(ParoleMissionState.radiusBlip)
                     end
+                    for _,interaction in pairs(ParoleMissionState.interactions) do DeleteInteraction(interaction) end
                     ParoleMissionState = nil
                     ShowNotification(_L("parole_officer_checkedin"))
                     ShowNotification(_L("parole_officer_checkedin_desc"))
@@ -270,6 +278,7 @@ function AddBailPlayer(source, data)
 end
 
 function RemoveBailPlayer(source)
+    if not BailPlayers[source] then return end
     if BailPlayers[source].blip then
         RemoveBlip(BailPlayers[source].blip)
     end

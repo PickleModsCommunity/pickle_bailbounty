@@ -27,7 +27,7 @@ end
 
 function GetExtraQueries(source, extraQueries)
     local queries = {}
-    if extraQueries["nearbyPlayers"] then
+    if type(extraQueries)=="table" and extraQueries["nearbyPlayers"] then
         queries["nearbyPlayers"] = GetNearbyPlayers(source)
     end
     return queries
@@ -49,7 +49,8 @@ function GetNearbyPlayers(source)
 end
 
 RegisterCallback("pickle_bailbounty:getPlayers", function(source, cb, ignoreSelf)
-    cb(GetAllPlayers(source, ignoreSelf))
+    local p=GetPlayerPermissions(source)
+    cb((p.bailManage or p.bailPlacement) and GetAllPlayers(source, ignoreSelf) or {})
 end)
 
 RegisterCallback("pickle_bailbounty:getNearbyPlayers", function(source, cb)
@@ -63,6 +64,8 @@ end)
 
 RegisterNetEvent("pickle_bailbounty:initializePlayer", function()
     local identifier = GetIdentifier(source)
+    if not identifier then return end
+    BBRecover(source)
     local bail = BailRegistry[identifier]
     if bail then
         bail.source = source
@@ -75,10 +78,15 @@ RegisterNetEvent("pickle_bailbounty:initializePlayer", function()
     end
     TriggerClientEvent("pickle_bailbounty:initializePlayer", source, {
         identifier = GetIdentifier(source),
-        bounties = BountyRegistry,
-        bailRegistry = BailRegistry,
+        bounties = BBView(source,'bounty') and BountyRegistry or (BountyRegistry[identifier] and {[identifier]=BountyRegistry[identifier]} or {}),
+        bailRegistry = BBView(source,'bail') and BailRegistry or (BailRegistry[identifier] and {[identifier]=BailRegistry[identifier]} or {}),
         permissions = GetPlayerPermissions(source),
     })
+    for id,info in pairs(BountyInfo) do
+        if BBView(source,'bounty',id) then
+            TriggerClientEvent('pickle_bailbounty:setBountyState',source,id,{type='registerBountyTarget',source=info.source,netId=info.netId})
+        end
+    end
 end)
 
 AddEventHandler("weaponDamageEvent", function(sender, data)
@@ -90,35 +98,25 @@ AddEventHandler("weaponDamageEvent", function(sender, data)
         if not BountyHunters[tonumber(sender)] then
             return CancelEvent()
         end
-        local ped = GetPlayerPed(tonumber(sender))
-        local coords = GetEntityCoords(ped)
-        local currentBounty = nil
-        for k,v in pairs(BountyInfo) do
-            local target
-            if v.source then
-                target = GetPlayerPed(v.source)
-            elseif v.netId then
-                target = NetworkGetEntityFromNetworkId(v.netId)
-                local targetCoords = GetEntityCoords(target)
-                local distance = #(coords - targetCoords)
-                if distance < 10.0 then 
-                    currentBounty = v
-                end
-            end
+        local ped=GetPlayerPed(tonumber(sender))
+        local currentBounty=nil
+        local victim=data.hitGlobalId and NetworkGetEntityFromNetworkId(data.hitGlobalId)
+        for id,info in pairs(BountyInfo) do
+            local target=BBEntity(info)
+            local bounty=BountyRegistry[id]
+            if target and target==victim and bounty and bounty.bountyHunter==tonumber(sender)
+                and #(GetEntityCoords(target)-GetEntityCoords(ped))<10 then currentBounty=info end
         end
         if not currentBounty then return CancelEvent() end
     end
 end)
 
-AddEventHandler("onResourceStart", function(name)
-    if name == GetCurrentResourceName() then 
-        SetTimeout(1000, function()
-            TriggerClientEvent("pickle_bailbounty:onRestart", -1)
-        end)
-    end
-end)
-
 MySQL.ready(function()
+    local remaining=2
+    local function loaded()
+        remaining=remaining-1
+        if remaining==0 then BBReady=true; TriggerClientEvent('pickle_bailbounty:onRestart',-1) end
+    end
     MySQL.Sync.execute([[CREATE TABLE IF NOT EXISTS pickle_bailbounty_bounties (
         target VARCHAR(255) PRIMARY KEY NOT NULL,
         targetname VARCHAR(255) NOT NULL,
@@ -156,6 +154,7 @@ MySQL.ready(function()
                 sentence = bounty.sentence,
             }, true)
         end
+        loaded()
     end)
     MySQL.Async.fetchAll("SELECT * FROM pickle_bailbounty_bail", {}, function(bail)
         for _, bail in ipairs(bail) do
@@ -174,5 +173,6 @@ MySQL.ready(function()
                 sentence = bail.sentence
             }, true)
         end
+        loaded()
     end)
 end)

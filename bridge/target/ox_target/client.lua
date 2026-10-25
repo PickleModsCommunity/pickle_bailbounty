@@ -30,7 +30,7 @@ function GetOptionNames(options)
     for i=1, #options do 
         optionsNames[i] = options[i].name
     end
-    return optionNames
+    return optionsNames
 end
 
 function AddTargetNetworkId(networkId, options)

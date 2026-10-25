@@ -45,6 +45,7 @@ function CheckPermission(source, permission)
     local source = tonumber(source)
     local xPlayer = QBCore.Functions.GetPlayer(tonumber(source))?.PlayerData
     if not xPlayer then return end
+    if not xPlayer then return false end
     local name = xPlayer.job.name
     local rank = xPlayer.job.grade.level
     if permission.jobs[name] and permission.jobs[name] <= rank then 
@@ -57,14 +58,16 @@ function CheckPermission(source, permission)
     end
 end
 
-function AddMoney(source, count)
-    local xPlayer = QBCore.Functions.GetPlayer(tonumber(source))
-    xPlayer.Functions.AddMoney('cash',count)
+function AddMoney(source,count)
+    local p=QBCore.Functions.GetPlayer(source)
+    if not p then return false end
+    return p.Functions.AddMoney('cash',count)==true
 end
 
-function RemoveMoney(source, count)
-    local xPlayer = QBCore.Functions.GetPlayer(tonumber(source))
-    xPlayer.Functions.RemoveMoney('cash',count)
+function RemoveMoney(source,count)
+    local p=QBCore.Functions.GetPlayer(source)
+    if not p then return false end
+    return p.Functions.RemoveMoney('cash',count)==true
 end
 
 function GetMoney(source)
@@ -99,6 +102,7 @@ CreateThread(function()
     Inventory.GetInventory = function(source)
         local xPlayer = QBCore.Functions.GetPlayer(tonumber(source))
         local items = {}
+        if not xPlayer then return items end
         local data = xPlayer.PlayerData.items
         for slot, item in pairs(data) do 
             items[#items + 1] = {
@@ -112,25 +116,30 @@ CreateThread(function()
     end
 
     Inventory.UpdateInventory = function(source)
+        local owner=GetIdentifier(source)
         SetTimeout(1000, function()
-            TriggerClientEvent("pickle_bailbounty:updateInventory", source, Inventory.GetInventory(source))
+            if GetPlayerName(source) and GetIdentifier(source)==owner then TriggerClientEvent("pickle_bailbounty:updateInventory", source, Inventory.GetInventory(source)) end
         end)
     end
 
     Inventory.AddItem = function(source, name, count, metadata) -- Metadata is not required.
         local xPlayer = QBCore.Functions.GetPlayer(tonumber(source))
-        xPlayer.Functions.AddItem(name, count, nil, metadata)
+        if not xPlayer then return false end
+        local ok=xPlayer.Functions.AddItem(name, count, nil, metadata)
         Inventory.UpdateInventory(source)
+        return ok==true
     end
 
     Inventory.RemoveItem = function(source, name, count)
         local xPlayer = QBCore.Functions.GetPlayer(tonumber(source))
-        xPlayer.Functions.RemoveItem(name, count)
+        if not xPlayer then return false end
+        local ok=xPlayer.Functions.RemoveItem(name, count)
         Inventory.UpdateInventory(source)
+        return ok==true
     end
 
     Inventory.AddWeapon = function(source, name, count, metadata) -- Metadata is not required.
-        Inventory.AddItem(source, name, count, metadata)
+        return Inventory.AddItem(source, name, count, metadata)
     end
 
     Inventory.RemoveWeapon = function(source, name, count)
