@@ -79,7 +79,7 @@ function UpdatePermissions(permissions)
 end
 
 RegisterNetEvent("pickle_bailbounty:initializePlayer", function(data)
-    if initializedPlayer then return end
+    -- Resynchronize identity and permissions on every character initialization.
     initializedPlayer = true
     LOCAL_IDENTIFIER = data.identifier
     LOCAL_PERMISSIONS = data.permissions
@@ -101,6 +101,7 @@ end)
 
 RegisterNUICallback("closeApp", function(data, cb)
     SetAppDisplay(false)
+    cb("ok")
 end)
 
 RegisterCommand("bounties", function()

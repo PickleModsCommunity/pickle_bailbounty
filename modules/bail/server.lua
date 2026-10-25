@@ -10,7 +10,7 @@ function AddBailToRegistry(bail, ignoreSync, insertSQL)
         dprint("Bail already exists for identifier: " .. bail.identifier)
         return
     end
-    BailRegistry[bail.identifier] = {
+    local entry = {
         source = GetSourceFromIdentifier(bail.identifier),
         identifier = bail.identifier,
         name = bail.name,
@@ -26,7 +26,7 @@ function AddBailToRegistry(bail, ignoreSync, insertSQL)
         sentence = bail.sentence or 0,
     }
     if insertSQL then
-        MySQL.Async.execute("INSERT INTO pickle_bailbounty_bail (identifier, name, image, issuer, reward, description, status, startdate, completiondate, nextcompliance, lastcompliance, sentence) VALUES (@identifier, @name, @image, @issuer, @reward, @description, @status, @startdate, @completiondate, @nextcompliance, @lastcompliance, @sentence)", {
+        BBExecute("INSERT INTO pickle_bailbounty_bail (identifier, name, image, issuer, reward, description, status, startdate, completiondate, nextcompliance, lastcompliance, sentence) VALUES (@identifier, @name, @image, @issuer, @reward, @description, @status, @startdate, @completiondate, @nextcompliance, @lastcompliance, @sentence)", {
             ["@identifier"] = bail.identifier,
             ["@name"] = bail.name,
             ["@image"] = bail.image or "NO_IMAGE",
@@ -43,8 +43,9 @@ function AddBailToRegistry(bail, ignoreSync, insertSQL)
             dprint("Inserted bail into SQL: " .. rowsChanged)
         end)
     end
+    BailRegistry[bail.identifier] = entry
     if ignoreSync then return end
-    TriggerClientEvent("pickle_bailbounty:addbail", -1, bail.identifier, BailRegistry[bail.identifier])
+    BBBroadcast("pickle_bailbounty:addbail", bail.identifier, BailRegistry[bail.identifier])
 end
 
 exports("AddBailToRegistry", function(bail)
@@ -56,14 +57,14 @@ function RemoveBailFromRegistry(identifier, ignoreSync)
         dprint("Bail does not exist for identifier: " .. identifier)
         return
     end
-    BailRegistry[identifier] = nil
-    MySQL.Async.execute("DELETE FROM pickle_bailbounty_bail WHERE identifier = @identifier", {
+    BBExecute("DELETE FROM pickle_bailbounty_bail WHERE identifier = @identifier", {
         ["@identifier"] = identifier,
     }, function(rowsChanged)
         dprint("Deleted bail from SQL: " .. rowsChanged)
     end)
+    BailRegistry[identifier] = nil
     if ignoreSync then return end
-    TriggerClientEvent("pickle_bailbounty:removebail", -1, identifier, GetSourceFromIdentifier(identifier))
+    BBBroadcast("pickle_bailbounty:removebail", identifier, GetSourceFromIdentifier(identifier))
 end
 
 exports("RemoveBailFromRegistry", function(identifier)
@@ -96,10 +97,10 @@ exports("DoesBailRequireCheckIn", DoesBailRequireCheckIn)
 function UpdateBail(identifier, bail, noSQL)
     BailRegistry[identifier] = bail
     local event = function()
-        TriggerClientEvent("pickle_bailbounty:updatebail", -1, identifier, BailRegistry[identifier])
+        BBBroadcast("pickle_bailbounty:updatebail", identifier, BailRegistry[identifier])
     end
     if noSQL then event() return end
-    MySQL.Async.execute("UPDATE pickle_bailbounty_bail SET status = @status, startdate = @startdate, completiondate = @completiondate, nextcompliance = @nextcompliance, lastcompliance = @lastcompliance WHERE identifier = @identifier", {
+    BBExecute("UPDATE pickle_bailbounty_bail SET status = @status, startdate = @startdate, completiondate = @completiondate, nextcompliance = @nextcompliance, lastcompliance = @lastcompliance WHERE identifier = @identifier", {
         ["@identifier"] = identifier,
         ["@status"] = bail.status,
         ["@startdate"] = bail.startdate and os.date("%Y-%m-%d %H:%M:%S", bail.startdate) or nil,
@@ -111,46 +112,24 @@ function UpdateBail(identifier, bail, noSQL)
     end)
 end
 
-RegisterNetEvent("pickle_bailbounty:placeBail", function(data)
-    local source = source
-    local permissions = GetPlayerPermissions(source)
-    if not permissions.bailPlacement then
-        return ShowNotification(source, _L("no_permission_bailplace"))
+RegisterNetEvent('pickle_bailbounty:placeBail',function(data)
+    local src=source
+    if not GetPlayerPermissions(src).bailPlacement or not BBValidData(src,data,true) then return end
+    local target=data.source; local id=GetIdentifier(target)
+    if not id or BBLocks[id] or BailRegistry[id] or BountyRegistry[id] or GetMoney(target)<data.penalty
+        or Inventory.GetItemCount(src,'ankle_monitor')<1 then return end
+    BBLocks[id]=true
+    if not Inventory.RemoveItem(src,'ankle_monitor',1) then BBLocks[id]=nil; return end
+    if not RemoveMoney(target,data.penalty) then Inventory.AddItem(src,'ankle_monitor',1); BBLocks[id]=nil; return end
+    local bail={identifier=id,name=GetPlayerCharacterName(target),image=data.image,issuer=GetIdentifier(src),
+        reward=data.penalty,description=data.description or '',startdate=os.time(),completiondate=os.time()+data.length*86400,
+        nextcompliance=os.time()+86400,lastcompliance=os.time(),status='compliant',sentence=data.sentence or 0}
+    local ok=pcall(AddBailToRegistry,bail,false,true)
+    if not ok then
+        BBPay(id,data.penalty,'failed-placement:'..id..':'..bail.startdate)
+        Inventory.AddItem(src,'ankle_monitor',1)
     end
-    local target = data.source
-    local identifier = GetIdentifier(target)
-    if not identifier then
-        return ShowNotification(source, _L("no_player_near"))
-    end
-    if BailRegistry[identifier] then
-        return ShowNotification(source, _L("bail_already_exists"))
-    end
-    local count = Inventory.GetItemCount(source, "ankle_monitor")
-    if count < 1 then
-        return ShowNotification(source, _L("no_ankle_monitor"))
-    end
-    Inventory.RemoveItem(source, "ankle_monitor", 1)
-    local money = GetMoney(target)
-    if money < data.penalty then
-        ShowNotification(source, _L("bail_not_enough_money"))
-        return 
-    end
-    local bail = {
-        identifier = identifier,
-        name = GetPlayerCharacterName(target),
-        image = data.image,
-        issuer = GetIdentifier(source),
-        reward = data.penalty,
-        description = data.description,
-        startdate = os.time(),
-        completiondate = os.time() + (data.length * 86400),
-        nextcompliance = (os.time() + 86400),
-        lastcompliance = os.time(),
-        status = "compliant",
-        sentence = data.sentence or 0,
-    }
-    AddBailToRegistry(bail, false, true)
-    ShowNotification(source, "Bail placed on " .. bail.name .. " for " .. NumberWithCommas(data.penalty))
+    BBLocks[id]=nil
 end)
 
 RegisterNetEvent('pickle_bailbounty:clearBail', function(target)
@@ -186,19 +165,7 @@ RegisterNetEvent("pickle_bailbounty:revokeBail", function(target, selfRemove)
     end
     local bail = BailRegistry[target]
     if not bail then return end
-    RemoveBailFromRegistry(target, false)
-    AddBountyToRegistry({
-        target = bail.identifier,
-        targetname = bail.name,
-        issuer = bail.issuer,
-        name = bail.name,
-        image = bail.image,
-        reward = bail.reward,
-        description = bail.description,
-        datetime = os.time(),
-        risk = 3,
-        sentence = bail.sentence,
-    }, false, true)
+    BBConvertBail(target)
     if not selfRemove then
         ShowNotification(source, _L("bail_revoked", bail.name))
     end
@@ -209,19 +176,23 @@ RegisterNetEvent("pickle_bailbounty:completeParoleCheckin", function()
     local identifier = GetIdentifier(source)
     if not identifier then return end
     local bail = BailRegistry[identifier]
-    if not bail then return end
+    local mission=BBParole[source]
+    if not bail or not mission or mission.identity~=identifier or mission.period~=bail.nextcompliance
+        or os.time()>mission.period or mission.progress<mission.required then return end
+    BBParole[source]=nil
     bail.lastcompliance = os.time()
     local nextDate = bail.startdate
     repeat
         nextDate = nextDate + 86400
     until nextDate > bail.lastcompliance
-    bail.nextcompliance = nextDate + 86400
+    bail.nextcompliance = nextDate
     bail.status = "compliant"
     UpdateBail(identifier, bail)
 end)
 
 RegisterCallback("pickle_bailbounty:getBailInfo", function(source, cb, target)
     local target = target or GetIdentifier(source)
+    if target~=GetIdentifier(source) and not GetPlayerPermissions(source).bailManage and not GetPlayerPermissions(source).bailPlacement then cb(); return end
     local bail, data = GetBailStatus(target, {onlyPlayer = true, requireOnline = true})
     if not bail then return cb() end
     cb({
@@ -256,24 +227,12 @@ CreateThread(function()
                 local nextcompliance = bail.nextcompliance
                 local timeLeft = nextcompliance - currentTime
                 if currentTime > nextcompliance and nextcompliance < bail.completiondate then
-                    RemoveBailFromRegistry(k)
-                    AddBountyToRegistry({
-                        target = bail.identifier,
-                        targetname = bail.name,
-                        issuer = bail.issuer,
-                        name = bail.name,
-                        image = bail.image,
-                        reward = bail.reward,
-                        description = bail.description,
-                        datetime = os.time(),
-                        risk = 3,
-                        sentence = bail.sentence,
-                    }, false, true)
+                    BBConvertBail(k)
                 elseif currentTime > bail.completiondate then
                     local reward = bail.reward
-                    AddMoney(data.source, reward)
-                    ShowNotification(data.source, _L("bail_registry_reward", NumberWithCommas(reward)))
                     RemoveBailFromRegistry(k)
+                    BBPay(bail.identifier,reward,"bail:"..bail.identifier..":"..bail.startdate)
+                    ShowNotification(data.source, _L("bail_registry_reward", NumberWithCommas(reward)))
                 else
                     local notifyTime = Config.Bail.notifyTime * 3600
                     local bailWarning = BailWarnings[k] or 0
@@ -302,7 +261,10 @@ CreateThread(function()
                 BailPlayers[data.source] = {coords = coords, name = GetPlayerCharacterName(data.source)}
             end
         end
-        TriggerClientEvent("pickle_bailbounty:updateBailPlayers", -1, BailPlayers)
+        for _,id in ipairs(GetPlayers()) do
+            local src=tonumber(id); local p=GetPlayerPermissions(src)
+            TriggerClientEvent('pickle_bailbounty:updateBailPlayers',src,(p.bailPlacement or p.bailManage) and BailPlayers or {})
+        end
         Wait(5000)
     end
 end)

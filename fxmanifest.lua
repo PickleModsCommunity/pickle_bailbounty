@@ -35,6 +35,7 @@ client_scripts {
 server_scripts {
 	"@mysql-async/lib/MySQL.lua",
 	"bridge/**/**/server.lua",
+    "core/authority.lua",
 	"modules/**/server.lua",
 }
 
